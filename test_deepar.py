@@ -1,3 +1,12 @@
+############################################################################################
+## Arguments
+## - op: airline name (Train & Test for a single operator)
+## - ata: 6-digit ATA number (Train & Test for a single ATA)
+## - epochs: default as 100
+## Date: 2026. 5.25.
+## Description:
+## - Test DeepAR
+############################################################################################
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -32,6 +41,7 @@ def load_pickle(filepath):
     with open(filepath, 'rb') as f:
         return pickle.load(f)
 
+## Load libs. for DeepAR
 from gluonts.dataset.common import ListDataset
 from gluonts.torch.model.deepar import DeepAREstimator
 from gluonts.dataset.common import ListDataset
@@ -52,27 +62,11 @@ if not hasattr(np, 'float'):
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 ## Directory set-up
 base_dir = "/home/mhi/Data/dataset"
-# model_dir_name = 'train_model'
-# predict_dir_name = 'test_results_all'
-scaler_dir_name = 'scalers_up'
-config_dir_name = 'configs_up'
-model_dir_name = 'train_model_up'
-predict_dir_name = 'test_result_up'
 
-## Group (regional) of operators
-europe_ops=['ANE', 'BCY', 'CLH']
-asia_ops = ['HXA', 'IBX']
-na_grp = ['EDV', 'PSY', 'SKW']
-ac_model = 'CRJ700'
-
-# selected_operators = ['SKW', 'PSY', 'EDV', 'ANE', 'BCY', 'CLH','HXA', 'IBX']
-# selected_operators = ['SKW', 'PSY', 'EDV']
-all_operators = ['EDV', 'CLH','HXA', 'IBX', 'ANE', 'JZA', 'SKW', 'PSY']
-# all_operators = ['IBX', 'ANE', 'JZA', 'SKW', 'PSY']
-
-# target_atas_all= [243201, 324301, 344401, 215206]
-target_atas_all = [243201, 324301, 344401, 243203, 313301, 324201]
-# target_atas_all = [313301, 324201]
+all_operators = ['E', 'C','H', 'I', 'A', 'J', 'S', 'P']
+target_atas_all= [243201, 324301,  243203, 313301, 344401, 324201]
+ata_names = ['Main \nBattery', 'Break \nAssembly', 'APU \nBattery', 'Quick \nAccess \nRecorder', 
+             'Radio \nTransceiver', 'Nose \nWheel &\nTire \nAssembly']
 
 view_cols = ['PART_NO', 'PART_SN', 'INSTALL_DATE', 'REMOVAL_DATE', 'REMOVAL_TYPE_CODE', 'AC_SN', 'OPERATOR_CODE', 'FLIGHT_HOURS', 'FLIGHT_CYCLES', 'CUML_HOURS']
 
@@ -84,28 +78,28 @@ m_cols = ['PART_NO', 'PART_SN', 'INSTALL_DATE', 'REMOVAL_DATE', 'REMOVAL_TYPE_CO
 ## Minimum flight hours for use
 MIN_FH = 10
 
-
 ## Important datetime split
 considered_date = datetime.datetime(2015,1,1)
 latest_date = datetime.datetime(2025,10,1)
 test_date = datetime.datetime(2023,3,1)
-# margin_duration = 365*2
 
+#############################################################################
+## Parameter setting & default parameters
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-group_op', help='  : select group of ops (ex. asia, europe, na, ...)', default=None)
-parser.add_argument('-op', help='   : select a single ATA (ex. HXA)', default='HXA')
+parser.add_argument('-op', help='   : select a single ATA (ex. HXA)', default='H')
 parser.add_argument('-ata6', help = '  : select ATA6', default='all')
 parser.add_argument('-epochs', help= '   : set epochs for training', default=100)
-# parser.add_argument('-type', help='     : set training set for removal type code (all, U, S)', default='all')
-# parser.add_argument('-scaler', help='     : set scaler between standard, minmax, robust', default='standard')
 parser.add_argument('-seq_len', help='      : sequence length for train/test inputs', default=3)
-# parser.add_argument('-embed', help='      : set embedding for categorical variables (True, False)', default='True')
-# parser.add_argument('-sel_ones', help='     : selection of features (all, part, month)', default='all')
 args = parser.parse_args()
 
+## Predic next flight hours
 prediction_length = 1
 
+#############################################################################
+## Related functions
+## DeepAR needs autoregressive sequential data, thus, we extract sequences from an AC
 def create_listdataset(df, freq):
     dataset = []
     for pid, group in df.groupby('AC_SN'):
@@ -126,14 +120,13 @@ def param_passer(args):
     else:
         sel_ops = args.group_op
         print('OPs: ', sel_ops)
-        if args.group_op == 'asia':
-            selected_operators = asia_ops
-        elif args.group_op == 'europe':
-            selected_operators = europe_ops
-        elif args.group_op == 'na':
-            selected_operators = na_ops
-        elif args.group_op == 'all':
-            selected_operators = all_operators
+        if args.group_op == 'all':
+            selected_operators = [all_operators]
+        elif args.group_op == 'each':
+            selected_operators = [[op] for op in all_operators]
+            # selected_operators = [[op] for op in europe_ops]
+        elif args.group_op == 'test_all':
+            selected_operators = []
         else:
            print(f'No group of the name {args.group_op}')
            return None, None, None, None
@@ -144,12 +137,9 @@ def param_passer(args):
         target_atas = [int(args.ata6)]
 
     epochs = int(args.epochs)
-    # sel_type = args.type
 
     # scaler_type = args.scaler
     seq_len  = int(args.seq_len)
-    # embed = True if args.embed.lower() == 'True' else False
-    # sel_ones = args.sel_ones
 
     return selected_operators, target_atas, epochs, seq_len
 
@@ -179,7 +169,8 @@ def add_before_fh(all_tests):
 
     return all_tests
 
-
+#############################################################################
+## main function
 def main(argv, args):
     print('\n')
     print('argv: ', argv)
@@ -195,8 +186,6 @@ def main(argv, args):
 
     for ii, sel_op in enumerate(selected_operators):
         print(f"GRP: {sel_op}, ATA: {target_atas}")
-
-        # df_op = df_rep.groupby('OPERATOR_CODE').get_group(sel_op)
         
         for target_ata in target_atas:
             df_rep_rev = get_selected_data(df_rep, df_util_diff, [sel_op], target_ata)
@@ -278,38 +267,31 @@ def main(argv, args):
             predictions = []
 
             for pid, group in test_df.groupby('AC_SN'):
-                # 초기 context: train_df 마지막 context_length
                 subset = train_df[train_df['AC_SN'] == pid]['PART_NO_cat']
                 if not subset.empty:
                     part_no_cat = subset.iloc[-1]
                 else:
-                    # 없는 경우 기본값 지정 (예: 0)
                     part_no_cat = 0
                 
                 context = train_df[train_df['AC_SN'] == pid]['FLIGHT_HOURS'].values[-context_length:].tolist()
-                # part_no_cat = train_df[train_df['AC_SN'] == pid]['PART_NO_cat'].iloc[-1]  # 마지막 값 사용
 
                 for fh_true in group['FLIGHT_HOURS'].values:
-                    # context를 dict로 wrapping해서 ListDataset 생성
                     input_ds = ListDataset([{
-                        "start": pd.Timestamp('2020-01-01'),  # 임의 start, 실제 날짜는 의미 없음
+                        "start": pd.Timestamp('2020-01-01'), 
                         "target": np.array(context, dtype=float),
                         "item_id": str(pid),
                         "feat_static_cat": [part_no_cat]  
                     }], freq='D')
 
-                    # predict 호출
                     forecast_it = predictor.predict(input_ds)
                     forecast = next(forecast_it)
 
-                    # 평균 예측
-                    fh_pred = forecast.mean[ -1]  # 마지막 step 예측
+                    fh_pred = forecast.mean[ -1]
                     predictions.append(fh_pred)
 
-                    # context 업데이트: 실제값 사용
+                    # Update context for using the most recent data for sequential input
                     context = context[1:] + [fh_true]
             
-        
 
             df_test['FH_AR2'] = predictions
 

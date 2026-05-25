@@ -1,9 +1,12 @@
 ############################################################################################
 ## Arguments
-## - op: operator name (Train & Test for a single operator)
+## - op: airline name (Train & Test for a single operator)
 ## - ata: 6-digit ATA number (Train & Test for a single ATA)
 ## - epochs: default as 100
-## Date: 2026. 2. 26.
+## Date: 2026. 5.25.
+## Description:
+## - CALE test with incrementing training set (w/ adding airlines)
+## - In here, we fixed the test set as target operator, but increasing training set only
 ############################################################################################
 
 import pandas as pd
@@ -47,26 +50,15 @@ device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 ## Directory set-up
 base_dir = "/home/mhi/Data/dataset"
-# model_dir_name = 'train_model'
-# predict_dir_name = 'test_results_all'
 scaler_dir_name = 'scalers_up'
 config_dir_name = 'configs_up'
 model_dir_name = 'train_model_up'
 predict_dir_name = 'test_result_up'
 
-## Group (regional) of operators
-europe_ops=['ANE', 'BCY', 'CLH']
-asia_ops = ['HXA', 'IBX']
-na_grp = ['EDV', 'PSY', 'SKW']
-ac_model = 'CRJ700'
-
-# all_operators = ['SKW'] #, 'PSY', 'EDV', 'ANE', 'BCY', 'CLH','HXA', 'IBX']
-# all_operators2 = ['SKW', 'PSY', 'EDV', 'ANE', 'BCY', 'CLH','HXA', 'IBX']
-all_operators = ['EDV', 'SKW','JZA', 'PSY', 'CLH','HXA', 'IBX', 'ANE']
-# target_atas_all= [243201, 324301, 344401, 215206]
-target_atas_all2 = [243203, 253203, 313301, 324101, 324201, 324101, 335141, 722110]
+all_operators = ['E', 'C','H', 'I', 'A', 'J', 'S', 'P']
 target_atas_all= [243201, 324301,  243203, 313301, 344401, 324201]
-    
+ata_names = ['Main \nBattery', 'Break \nAssembly', 'APU \nBattery', 'Quick \nAccess \nRecorder', 
+             'Radio \nTransceiver', 'Nose \nWheel &\nTire \nAssembly']
 ## For temporal use
 m_cols = ['PART_NO', 'PART_SN', 'INSTALL_DATE', 'REMOVAL_DATE', 'REMOVAL_TYPE_CODE', 'ATA_NUMBER', 
           'AC_SN', 'OPERATOR_CODE', 'FLIGHT_HOURS', 'FLIGHT_CYCLES']
@@ -83,7 +75,7 @@ test_date = datetime.datetime(2023,3,1)
 ## Parameter setting & default parameters
 parser = argparse.ArgumentParser()
 parser.add_argument('-group_op', help='  : select group of ops (ex. asia, europe, na, ...)', default='all')
-parser.add_argument('-op', help='   : select a single ATA (ex. HXA)', default='SKW')
+parser.add_argument('-op', help='   : select a single ATA (ex. HXA)', default='S')
 parser.add_argument('-ata6', help = '  : select ATA6', default='243203')
 parser.add_argument('-epochs', help= '   : set epochs for training', default=100)
 parser.add_argument('-type', help='     : set training set for removal type code (all, U, S)', default='U')
@@ -98,17 +90,8 @@ parser.add_argument('-batch', help='        : batch size for all models', defaul
 parser.add_argument('-min_records', help='        : minimum records for selected ATA-OP', default=50)
 parser.add_argument('-min_acs', help='        : minimum unique ACs for selected ATA-OP', default=10)
 args = parser.parse_args()
-# 
-# def get_incremental_operator_groups(start_op, operators):
-    # if start_op in operators:
-        # start_idx = operators.index(start_op)
-        # ordered_ops = operators[start_idx:]
-    # else:
-        # ordered_ops = [start_op] + [op for op in operators if op != start_op]
-        # print(f'Warning: {start_op} is not in all_operators. Starting with {ordered_ops[0]}.')
 
-    # return [ordered_ops[:idx + 1] for idx in range(len(ordered_ops))]
-
+### Controlling input data w/ adding airlines.
 def get_incremental_operator_groups(start_op, operators):
     ordered_ops = [start_op]
     ordered_ops += [op for op in operators if op != start_op]
@@ -139,21 +122,10 @@ def param_passer(args):
     else:
         sel_ops = args.group_op
         print('OPs: ', sel_ops)
-        if args.group_op == 'asia':
-            selected_operators = [asia_ops]
-        elif args.group_op == 'europe':
-            selected_operators = [europe_ops]
-        elif args.group_op == 'na':
-            selected_operators = [na_grp]
-        elif args.group_op == 'all':
-            selected_operators = get_incremental_operator_groups(args.op, all_operators)
-        elif args.group_op == 'region':
-            selected_operators = [na_grp, europe_ops, asia_ops]
-        elif args.group_op == 'not_na':
-            selected_operators = [europe_ops, asia_ops]
+        if args.group_op == 'all':
+            selected_operators = [all_operators]
         elif args.group_op == 'each':
             selected_operators = [[op] for op in all_operators]
-            # selected_operators = [[op] for op in europe_ops]
         elif args.group_op == 'test_all':
             selected_operators = []
         else:
@@ -183,16 +155,14 @@ def param_passer(args):
 
     return selected_operators, target_atas, epochs, sel_type, scaler_type, seq_len_ata, seq_len_sn, deviation, learning_rate, set_config, model_name, batch, min_records, min_acs
 
+#############################################################################
 ## main function
 def main(argv, args):
     print('\n')
     print('argv: ', argv)
     print('args: ', args)
 
-
     selected_operators, target_atas, epochs, sel_type, scaler_type, seq_len_ata, seq_len_sn, deviation, learning_rate, set_config, model_name, batch, min_records, min_acs = param_passer(args)
-    
-    # target_atas = 243201
     
     ## For relatively small-size model
     if set_config==1:

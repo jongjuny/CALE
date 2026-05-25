@@ -1,4 +1,8 @@
-
+############################################################################################
+## Date: 2026. 5.25.
+## Description:
+## - Base models
+############################################################################################
 import pandas as pd
 import numpy as np
 import math
@@ -242,13 +246,7 @@ def _get_series_data(st, seq_len, df_t, split_date=None):
 
 ## From the given subset (by PART_SN, i.e., df_t), extract X_train & X_test 
 ## Arguments work as pointer, thus they would be updated for each cases
-def append_series(
-    df_t, st, seq_len, split_date,
-    X_train, y_train,
-    X_test, y_test,
-    df_test, df_train,
-    deviation
-):
+def append_series(df_t, st, seq_len, split_date, X_train, y_train, X_test, y_test, df_test, df_train, deviation):
     end_idx = st[1]
 
     # TRAIN
@@ -298,12 +296,7 @@ def findU(lst):
 ######################################################################
 ## Extract PART_SN trajectories, building train / test for Transformer-encoder 
 
-def train_test_part_SN_serial_rev(
-    df_ata, sel_ops,
-    latest_date, split_date,
-    seq_len=5, deviation='cum',
-    filter_single=True
-):
+def train_test_part_SN_serial_rev(df_ata, sel_ops, latest_date, split_date, seq_len=5, deviation='cum', filter_single=True):
     save_columns = ['PART_NO', 'PART_SN', 'AC_SN', 'INSTALL_DATE',
         'OPERATOR_CODE', 'ATA_NUMBER', 'ATA_CHAPTER', 'ATA_SECTION',
         'ATA_COMPONENT', 'REMOVAL_DATE', 'REMOVAL_TYPE_CODE',
@@ -493,57 +486,6 @@ def train_test_split_rev_fh(all_tests, all_chks, pn_list, op_list, split_date, v
 
 #######################################################################################
 ## Models
-def scaled_dot_product_attention(Q, K, V, mask=None):
-    # Compute the dot products between Q and K, then scale by the square root of the key dimension
-    d_k = Q.size(-1)
-    scores = torch.matmul(Q, K.transpose(-2, -1)) / torch.sqrt(torch.tensor(d_k, dtype=torch.float32))
-
-    # Apply mask if provided (useful for masked self-attention in transformers)
-    if mask is not None:
-        scores = scores.masked_fill(mask == 0, float('-inf'))
-
-    # Softmax to normalize scores, producing attention weights
-    attention_weights = F.softmax(scores, dim=-1)
-    
-    # Compute the final output as weighted values
-    output = torch.matmul(attention_weights, V)
-    return output, attention_weights
-
-class SelfAttention(nn.Module):
-    def __init__(self, embed_size):
-        super(SelfAttention, self).__init__()
-        self.embed_size = embed_size
-        # Define linear transformations for Q, K, V
-        self.query = nn.Linear(embed_size, embed_size)
-        self.key = nn.Linear(embed_size, embed_size)
-        self.value = nn.Linear(embed_size, embed_size)
-
-    def forward(self, x, mask=None):
-        # Generate Q, K, V matrices
-        Q = self.query(x)
-        K = self.key(x)
-        V = self.value(x)
-        
-        # Calculate attention using our scaled dot-product function
-        out, _ = scaled_dot_product_attention(Q, K, V, mask)
-        return out
-
-def cross_attention(Q, K, V, mask=None):
-    # Compute the dot products between Q and K, then scale
-    d_k = Q.size(-1)
-    scores = torch.matmul(Q, K.transpose(-2, -1)) / torch.sqrt(torch.tensor(d_k, dtype=torch.float32))
-    
-    # Apply mask if provided
-    if mask is not None:
-        scores = scores.masked_fill(mask == 0, float('-inf'))
-    
-    # Softmax to normalize scores and get attention weights
-    attention_weights = F.softmax(scores, dim=-1)
-    
-    # Weighted sum of values
-    output = torch.matmul(attention_weights, V)
-    return output, attention_weights
-
 class MultiHeadAttentionRegression_MLP(nn.Module):
     def __init__(self, input_dim, hidden1, hidden2, embed_dim, num_heads, output_dim, dropout_ratio=0.3):
         super(MultiHeadAttentionRegression_MLP, self).__init__()
@@ -568,12 +510,9 @@ class MultiHeadAttentionRegression_MLP(nn.Module):
             nn.Sigmoid()
         )
 
-        # self.input_proj = nn.Linear(input_dim, embed_dim)
-
         self.multihead_atten = nn.MultiheadAttention(embed_dim, num_heads)
 
         self.fc = nn.Linear(embed_dim, output_dim)
-        
 
     def forward(self, x):
         # x = self.input_proj(x)
@@ -584,45 +523,6 @@ class MultiHeadAttentionRegression_MLP(nn.Module):
         output = self.fc(atten_output)
 
         return output
-
-class AttenCNN(nn.Module):
-    def __init__(self, in_channel, out_channel, stride, kernel_size, dropout_ratio = 0.1):
-        super(AttenCNN, self).__init__()
-        self.dropout_ratio = dropout_ratio
-        self.layer1 = nn.Sequential(
-            nn.Conv1d(in_channels=in_channel, out_channels=out_channel, kernel_size=kernel_size, stride=stride, padding=1, padding_mode='zeros'), 
-            nn.ReLU(),
-            nn.Dropout1d(dropout_ratio),
-            nn.MaxPool1d(kernel_size=2, stride=stride)
-        )
-        self.layer2 = nn.Sequential(
-            nn.Conv1d(in_channels=out_channel, out_channels=out_channel, kernel_size=kernel_size, stride=stride, padding=1, padding_mode='zeros'), 
-            nn.ReLU(),
-            nn.Dropout1d(dropout_ratio),
-            nn.MaxPool1d(kernel_size=kernel_size, stride=stride)
-        )
-        ## Attention
-        
-        self.self_attention = SelfAttention(out_channel)
-        # self.multi_attention = MultiHeadAttention(out_channel, 4)
-        ## Fill in the size for Linear
-        self.fc = nn.Linear(out_channel, 1, bias=True)
-        nn.init.xavier_uniform_(self.fc.weight)
-
-    def forward(self, x):
-        x = torch.cat([x], dim=0)
-        out = self.layer1(x.reshape(-1,1))
-        ## revise the layers
-        out = self.layer2(out)
-
-        out = self.self_attention(out.view(-1, out.size(0)))
-        # out = self.multi_attention(out.view(-1, out.size(0)))
-
-        # out = out.view(-1, out.size(0)) ## Flatten
-        # print('3', out.shape)
-        
-        out = self.fc(out)
-        return out
 
 class MultiheadAttenCNN(nn.Module):
     def __init__(self, in_channel, out_channel, num_heads, output_dim, stride, kernel_size, dropout_ratio = 0.1):
@@ -775,9 +675,6 @@ class TimeSeriesTransformer(nn.Module):
         self.predictor = nn.Linear(d_model, 1)
 
     def forward(self, x):
-        """
-        x: (batch, seq_len, feature_dim) or (seq_len, feature_dim)
-        """
         # if no batch (single sequence)
         if x.dim() == 2:
             x = x.unsqueeze(0)  # (1, seq_len, feature_dim)
@@ -816,9 +713,6 @@ class TimeSeriesTransformerMulti(nn.Module):
         self.unsch = nn.Linear(d_model, 1)
 
     def forward(self, x):
-        """
-        x: (batch, seq_len, feature_dim) or (seq_len, feature_dim)
-        """
         # if no batch (single sequence)
         if x.dim() == 2:
             x = x.unsqueeze(0)  # (1, seq_len, feature_dim)
@@ -839,147 +733,6 @@ class TimeSeriesTransformerMulti(nn.Module):
             unsch = unsch.squeeze(0)  # (1)
 
         return out, x_last, unsch
-
-###########################################################################################################
-## Previous version
-def train_model(
-    model, model_name, X_train, y_train, X_test, y_test, X_valid=None, y_valid=None, revise_valid = False, 
-    learning_rate=0.001, epochs=300, epochs_valid=300, out_per=None, device=torch.device('cpu')
-    ):
-
-    loss_fn = nn.MSELoss().to(device)
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-    losses, re_losses, val_losses = [], [], []
-    test_losses_val, test_losses = [], []
-
-    for epoch in range(epochs):
-        epoch_loss = 0
-        train_loss_vec = []
-        model.train()
-        idx = 0
-
-        for s1 in X_train:
-            s1 = s1.to(device)
-            optimizer.zero_grad()
-            if model_name in ['MultiHeadAttentionRegression', 'MultiHeadAttentionRegression_MLP']:
-                y_pred = model(s1.view(1, 1, s1.size(0)))
-            else:
-                y_pred = model(s1)
-            loss = loss_fn(y_pred.reshape(-1), y_train[idx].to(device))
-            loss.backward()
-            optimizer.step()
-            epoch_loss += loss.item()
-            train_loss_vec.append(loss.item())
-            idx +=1
-
-        if revise_valid:
-            val_loss = 0
-            model.eval()
-            for val_x, val_y in zip(X_valid, y_valid):
-                val_x = val_x.to(device)
-                if model_name in ['MultiHeadAttentionRegression', 'MultiHeadAttentionRegression_MLP']:
-                    y_vp = model(val_x.view(1, 1, val_x.size(0)))
-                else:
-                    y_vp = model(val_x)
-                loss = loss_fn(y_vp.reshape(-1), val_y.to(device))
-                val_loss += loss.item()
-
-        test_loss = 0
-        model.eval()
-        for test_x, test_y in zip(X_test, y_test):
-            test_x = test_x.to(device)
-            if model_name in ['MultiHeadAttentionRegression', 'MultiHeadAttentionRegression_MLP']:
-                y_tp= model(test_x.view(1, 1, test_x.size(0)))
-            else:
-                y_tp = model(test_x)
-            loss_test = loss_fn(y_tp.reshape(-1), test_y.to(device))
-            test_loss += loss_test.item()
-
-        if epoch % (epochs/10) == 0:
-            print('Epoch {:4d}/{} Cost: {:.6f}'.format(epoch, epochs, epoch_loss/len(X_train)))
-            if revise_valid and len(X_valid) > 0:
-                print('Validation: {:4d}/{} Cost: {:.6f}'.format(epoch, epochs, val_loss/len(X_valid)))
-            print('Test: {:4d}/{} Cost: {:.6f}'.format(epoch, epochs, test_loss/len(X_test)))
-
-        losses.append(epoch_loss/len(X_train))
-        if revise_valid and len(X_valid) > 0: val_losses.append(val_loss/len(X_valid))
-        else: val_losses.append(0)
-        test_losses_val.append(test_loss/len(X_test))
-
-        if epoch == int(epochs/2):
-        # if epoch == int(epochs/2):
-            if out_per is None:
-                th = np.mean(train_loss_vec) + 3*np.std(train_loss_vec)
-            else:
-                nt = math.ceil(len(train_loss_vec)* out_per/100)
-                th = sorted(train_loss_vec, reverse=True)[nt-1]
-
-            out_inds_tr = [i for i, val in enumerate(train_loss_vec) if val > th]
-            X_tr_out = [X_train[i] for i in out_inds_tr]
-            y_tr_out = [y_train[i] for i in out_inds_tr]
-            X_tr_re = [X_train[i] for i in range(len(X_train)) if i not in out_inds_tr]
-            y_tr_re = [y_train[i] for i in range(len(y_train)) if i not in out_inds_tr]
-            X_train, y_train = X_tr_re, y_tr_re
-
-
-    if revise_valid:
-        for epoch in range(epochs_valid):
-            valid_loss_vec = []
-            epoch_loss = 0
-            idx = 0
-            model.train()
-            for seq in X_valid:
-                seq.to(device)
-                optimizer.zero_grad()
-                if model_name in ['MultiHeadAttentionRegression', 'MultiHeadAttentionRegression_MLP']:
-                    y_pred = model(seq.view(1, 1, seq.size(0)))
-                else:
-                    y_pred = model(seq)
-                loss = loss_fn(y_pred.reshape(-1), y_valid[idx].to(device))
-                loss.backward()
-                optimizer.step()
-                idx +=1
-                epoch_loss += loss.item()
-                valid_loss_vec.append(loss.item())
-
-            test_loss = 0
-            model.eval()
-            for test_x, test_y in zip(X_test, y_test):
-                test_x.to(device)
-                if model_name in ['MultiHeadAttentionRegression', 'MultiHeadAttentionRegression_MLP']:
-                    y_tp = model(test_x.view(1, 1, test_x.size(0)))
-                else:
-                    y_tp = model(test_x)
-                loss_test = loss_fn(y_tp.reshape(-1), test_y.to(device))
-                test_loss += loss_test.item()
-            if epoch % (epochs_valid/10) == 0 and len(X_valid)>0:
-                print('[RE] Epoch {:4d}/{} Cost: {:.6f}'.format(epoch, epochs_valid, epoch_loss/len(X_valid)))
-                print('Test: {:4d}/{} Cost: {:.6f}'.format(epoch, epochs, test_loss/len(X_test)))
-            if len(X_valid)>0 : re_losses.append(epoch_loss/len(X_valid))
-            else: re_losses.append(0)
-            test_losses.append(test_loss/len(X_test))
-
-            if epoch == int(epochs/2):
-                out_inds_val = [i for i, val in enumerate(valid_loss_vec) if val > th]
-                X_val_out = [X_valid[i] for i in out_inds_val]
-                y_val_out = [y_valid[i] for i in out_inds_val]
-                X_val_re = [X_valid[i] for i in range(len(X_valid)) if i not in out_inds_val]
-                y_val_re = [y_valid[i] for i in range(len(y_valid)) if i not in out_inds_val]
-                X_valid, y_valid = X_val_re, y_val_re
-
-    return model
-
-def test_model(model, model_name, X_test, device=torch.device('cpu')):
-    y_ps = []
-    model.eval()
-    with torch.no_grad():
-        for s1 in X_test:
-            if model_name in ['MultiHeadAttentionRegression', 'MultiHeadAttentionRegression_MLP']:
-                y_ps.append(model(s1.view(1, 1, s1.size(0))).item())
-            else:
-                y_ps.append(model(s1).item())
-    return y_ps
-
 
 ###########################################################################################################
 ## Current version
@@ -1150,13 +903,7 @@ def test_model_rev(model, model_name, X_test, device=torch.device('cpu')):
     return y_ps
 
 ##########################################################################################################
-
 class MultiTaskLossClass(nn.Module):
-    """
-    Kendall et al. (2018) uncertainty weighting.
-    regression  : Gaussian NLL  → weight  exp(-log_var_reg)
-    classification : BCE        → weight  exp(-log_var_cls)
-    """
     def __init__(self, pos_weight: torch.Tensor | None = None):
         super().__init__()
         self.log_var_reg = nn.Parameter(torch.zeros(1))   # learnable

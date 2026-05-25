@@ -1,3 +1,9 @@
+############################################################################################
+## Date: 2026. 5.25.
+## Description:
+## - Libraries for CALE with train / test models (also support TCAN, TST)
+############################################################################################
+
 import pandas as pd
 import numpy as np
 import datetime
@@ -853,43 +859,22 @@ class UnscheduledPredictor(nn.Module):
         sigma = self.reg_sigma(fused) + 1e-6
         sigma = sigma[-1]
 
-        # for name, t in [('fused', fused), ('delta', delta), ('delta_abs', delta_abs),
-                # ('out_part', out_part), ('out_ac', out_ac), ('agreement', agreement)]:
-            # print(f"{name}: {t.shape}")
-        # print(f'dim. fused: {fused.shape}, delta: {delta.shape}, abs: {delta_abs.shape}, part: {out_part.shape}, ac: {out_ac.shape}, agreement: {agreement.shape}')
         inputs = self.safe_cat([fused, delta, delta_abs, out_part, out_ac, agreement])
         logit = self.classifier(inputs)
-        # logit = self.classifier(torch.cat([
-            # fused.squeeze(0), 
-            # delta.squeeze(), 
-            # delta_abs.squeeze(), 
-            # out_part.unsqueeze(0) if out_part.dim() ==1 else out_part.squeeze(0), 
-            # out_ac.squeeze(), 
-            # agreement.squeeze()
-            # ], dim=0).unsqueeze(0))
         logit = logit[-1]
         
         return mu.squeeze(), sigma.squeeze(), alpha.squeeze(), logit, out_ac.squeeze(), out_part.squeeze()
-        # return mu.squeeze(-1), sigma.squeeze(-1), alpha.squeeze(-1), logit, out_ac.squeeze(-1), out_part.squeeze(-1)
 
+## Multi Task loss funciton for CALE
 class MultiTaskLoss(nn.Module):
     def __init__(self):
         super().__init__()
-        # log(σ²) 형태로 학습 — 음수도 가능하게
         self.log_var_reg = nn.Parameter(torch.zeros(1))
         self.log_var_cls = nn.Parameter(torch.zeros(1))
         self.log_var_con = nn.Parameter(torch.zeros(1))
 
-    # def forward(self, L_reg, L_cls, L_consist):
-        # L / σ² + log(σ²)
-        # loss = (L_reg * torch.exp(-self.log_var_reg) + self.log_var_reg +
-                # L_cls * torch.exp(-self.log_var_cls) + self.log_var_cls +
-                # L_consist * torch.exp(-self.log_var_con) + self.log_var_con)
-        # return loss
     def forward(self, L_reg, L_cls, L_consist, y_unsch):
-        # y_unsch=1인 샘플만 regression loss에 반영
-        # L_reg는 이미 sample-wise로 계산되어 있어야 함 (reduction='none')
-        w_reg = y_unsch  # [B] — unscheduled만 regression 학습
+        w_reg = y_unsch  
         L_reg_masked = (w_reg * L_reg).sum() / (w_reg.sum() + 1e-8)
 
         loss = (L_reg_masked * torch.exp(-self.log_var_reg) + self.log_var_reg +
@@ -897,28 +882,23 @@ class MultiTaskLoss(nn.Module):
                 L_consist * torch.exp(-self.log_var_con) + self.log_var_con)
         return loss
     
-# def consist_loss(pred1, pred2, y_cls, epsilon=0.7):
+### Consistency loss
+## pred1: prediction from Encoder_loss (TCN_Atten)
+## pred2: prediction from Encoder_global (Transformer)
 def consist_loss(pred1, pred2, y_cls, margin=1.0):
-    """
-    pred1: 모델1 예측 (scheduled 무관 removal hour)
-    pred2: 모델2 예측 (next unscheduled removal hour)
-    y_cls: 실제 unscheduled 여부 (1 or 0)
-    epsilon: scheduled 샘플의 최소 마진
-    """
     delta = pred2 - pred1
 
     unsch_loss = y_cls * delta ** 2
-
-    # unscheduled=0 → pred2가 pred1보다 epsilon 이상 커야 함
-    # sch_loss = (1 - y_cls) * torch.clamp(epsilon - delta, min=0)
     sch_loss = (1 - y_cls) * torch.clamp(margin - delta, min=0) ** 2
 
     return (unsch_loss + sch_loss).mean()
 
+
+
+## Training function for CALE
 def train_UP(model, X_train_ac, X_train_sn, y_train_ac, y_train_sn, isUs, pns, repairs, cum_fhs, 
              has_history, optimizer, loss_gaussian, loss_logit, multi_task_loss, 
              epochs=50, lr = 0.0001, l1=1, l2=0.3, margin=1.0, device=torch.device('cpu')):
-    
 
     for epoch in range(epochs):
         # epoch_loss = 0
@@ -926,7 +906,6 @@ def train_UP(model, X_train_ac, X_train_sn, y_train_ac, y_train_sn, isUs, pns, r
         model.train()
         # idx = 0
         has_history = has_history.to(device)
-
 
         for x_ac, x_sn, y_ac, y_sn, isu, pn, repair, cum_fh in zip(X_train_ac, X_train_sn, y_train_ac, y_train_sn, isUs, pns, repairs, cum_fhs):
         # for i in range(0, len(X_train_ac), batch):
@@ -969,7 +948,7 @@ def train_UP(model, X_train_ac, X_train_sn, y_train_ac, y_train_sn, isUs, pns, r
 
 
 
-
+## Test function for CALE
 def test_UP(model, X_test_ac, X_test_sn, isUs, pns, repairs, cum_fhs, has_history, device=torch.device('cpu')):
     mu_ps, sigma_ps, alpha_ps, logit_ps, out_acs, out_parts = [], [], [], [], [], []
     model.eval()
